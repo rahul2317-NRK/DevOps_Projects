@@ -1,0 +1,165 @@
+# MCP Chatbot Configuration
+app:
+  name: "MCP Chatbot"
+  version: "1.0.0"
+  description: "Model Context Protocol powered chatbot system"
+  debug: false
+  
+# MCP Server Configuration
+mcp_server:
+  host: "localhost"
+  port: 8001
+  max_connections: 100
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 1.0
+
+# API Gateway Configuration
+api_gateway:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  reload: false
+  log_level: "info"
+  cors:
+    allow_origins: ["*"]
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+    allow_credentials: true
+
+# WebSocket Configuration
+websocket:
+  ping_interval: 20
+  ping_timeout: 20
+  close_timeout: 10
+  max_size: 1048576  # 1MB
+  max_queue: 32
+
+# Database Configuration
+database:
+  url: "postgresql://chatbot:chatbot_password@localhost:5432/mcp_chatbot"
+  echo: false
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600
+
+# Redis Configuration
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+  ssl: false
+  socket_timeout: 5
+  socket_connect_timeout: 5
+  retry_on_timeout: true
+  health_check_interval: 30
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file:
+    enabled: true
+    path: "logs/mcp-chatbot.log"
+    max_size: 10485760  # 10MB
+    backup_count: 5
+  console:
+    enabled: true
+    colorize: true
+
+# Security Configuration
+security:
+  secret_key: "your-secret-key-here"
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+  password_min_length: 8
+  max_login_attempts: 5
+  lockout_duration_minutes: 15
+
+# Chatbot Configuration
+chatbot:
+  max_message_length: 4000
+  max_history_length: 100
+  response_timeout: 30
+  typing_delay: 1.0
+  default_language: "en"
+  enable_search: true
+  enable_context_memory: true
+  
+  # Intent classification settings
+  intent_confidence_threshold: 0.7
+  fallback_responses:
+    - "I'm not sure I understand. Could you please rephrase that?"
+    - "I didn't quite catch that. Can you try asking in a different way?"
+    - "I'm having trouble understanding. Could you be more specific?"
+
+# Rate Limiting Configuration
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  burst_size: 10
+  cleanup_interval: 300  # 5 minutes
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check_interval: 30
+  performance_tracking: true
+  error_tracking: true
+  
+  # Prometheus metrics
+  prometheus:
+    enabled: true
+    path: "/metrics"
+    
+  # Custom metrics
+  custom_metrics:
+    - name: "messages_processed_total"
+      type: "counter"
+      description: "Total number of messages processed"
+    - name: "active_sessions"
+      type: "gauge"
+      description: "Number of active chat sessions"
+    - name: "response_time_seconds"
+      type: "histogram"
+      description: "Response time in seconds"
+
+# Feature Flags
+features:
+  websocket_enabled: true
+  search_enabled: true
+  user_preferences: true
+  session_persistence: true
+  message_history: true
+  typing_indicators: true
+  real_time_updates: true
+  file_uploads: false
+  voice_messages: false
+  
+# Development Configuration
+development:
+  auto_reload: true
+  debug_mode: false
+  mock_responses: false
+  test_mode: false
+  profiling: false
+
+# Production Configuration
+production:
+  auto_reload: false
+  debug_mode: false
+  ssl_enabled: true
+  ssl_cert_path: "/etc/ssl/certs/chatbot.crt"
+  ssl_key_path: "/etc/ssl/private/chatbot.key"
+  
+# Backup Configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 30
+  storage_path: "/app/backups"
+  compress: true
