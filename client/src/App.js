@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import io from 'socket.io-client';
 import {
   Container,
   Paper,
@@ -8,150 +9,177 @@ import {
   Typography,
   List,
   ListItem,
-  ListItemText,
-  AppBar,
-  Toolbar,
-  IconButton,
-  CircularProgress,
+  Avatar,
   Chip,
-  Card,
-  CardContent
+  CircularProgress,
+  Alert,
+  Snackbar
 } from '@mui/material';
 import {
   Send as SendIcon,
-  Home as HomeIcon,
-  Calculate as CalculateIcon,
-  Favorite as FavoriteIcon,
-  TrendingUp as TrendingUpIcon
+  SmartToy as BotIcon,
+  Person as PersonIcon
 } from '@mui/icons-material';
-import io from 'socket.io-client';
-import axios from 'axios';
 import './App.css';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || window.location.origin;
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [userId] = useState(`user-${Date.now()}`);
-  const [sessionId] = useState(`session-${Date.now()}`);
-  const [roomId] = useState(`room-${Date.now()}`);
-  
-  const socket = useRef(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
   const messagesEndRef = useRef(null);
+  const socketRef = useRef(null);
+  const roomId = 'demo-room-123';
 
-  useEffect(() => {
-    // Initialize Socket.IO connection
-    socket.current = io(SOCKET_URL);
-    
-    socket.current.on('connect', () => {
-      setIsConnected(true);
-      socket.current.emit('join-room', roomId);
-      
-      // Add welcome message
-      setMessages([{
-        id: 'welcome',
-        type: 'bot',
-        message: 'Welcome to Blue Pixel AI! I\'m here to help you with all your real estate needs. Ask me about properties, mortgage calculations, or market trends.',
-        timestamp: new Date().toISOString(),
-        suggestions: [
-          'Show me houses in San Francisco',
-          'Calculate mortgage for $500,000',
-          'What are current interest rates?',
-          'Find 3-bedroom apartments'
-        ]
-      }]);
-    });
-
-    socket.current.on('disconnect', () => {
-      setIsConnected(false);
-    });
-
-    socket.current.on('chat-response', (response) => {
-      setIsLoading(false);
-      setMessages(prev => [...prev, {
-        id: `bot-${Date.now()}`,
-        type: 'bot',
-        ...response,
-        timestamp: new Date().toISOString()
-      }]);
-    });
-
-    socket.current.on('error', (error) => {
-      setIsLoading(false);
-      setMessages(prev => [...prev, {
-        id: `error-${Date.now()}`,
-        type: 'error',
-        message: 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date().toISOString()
-      }]);
-    });
-
-    return () => {
-      socket.current?.disconnect();
-    };
-  }, [roomId]);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  // API base URL - use current origin for Vercel deployment
+  const API_BASE = process.env.NODE_ENV === 'production' 
+    ? window.location.origin 
+    : 'http://localhost:5000';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const sendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return;
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  useEffect(() => {
+    // Initialize Socket.IO connection (fallback for real-time features)
+    try {
+      socketRef.current = io(API_BASE, {
+        transports: ['websocket', 'polling'],
+        timeout: 5000
+      });
+
+      socketRef.current.on('connect', () => {
+        console.log('Connected to server');
+        setIsConnected(true);
+        socketRef.current.emit('join-room', roomId);
+      });
+
+      socketRef.current.on('disconnect', () => {
+        console.log('Disconnected from server');
+        setIsConnected(false);
+      });
+
+      socketRef.current.on('chat-response', (response) => {
+        console.log('Received response:', response);
+        setIsLoading(false);
+        
+        const botMessage = {
+          id: Date.now(),
+          text: response.message,
+          sender: 'bot',
+          timestamp: new Date(),
+          data: response.data
+        };
+        
+        setMessages(prev => [...prev, botMessage]);
+        
+        if (response.data?.suggestions) {
+          setSuggestions(response.data.suggestions);
+        }
+      });
+
+      socketRef.current.on('connect_error', (error) => {
+        console.log('Connection error:', error);
+        setIsConnected(false);
+      });
+
+    } catch (error) {
+      console.error('Socket initialization error:', error);
+      setIsConnected(false);
+    }
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, [API_BASE]);
+
+  const sendMessage = async (messageText = inputMessage) => {
+    if (!messageText.trim()) return;
 
     const userMessage = {
-      id: `user-${Date.now()}`,
-      type: 'user',
-      message: inputMessage.trim(),
-      timestamp: new Date().toISOString()
+      id: Date.now(),
+      text: messageText,
+      sender: 'user',
+      timestamp: new Date()
     };
 
     setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
     setIsLoading(true);
+    setError('');
 
-    // Send via Socket.IO if connected
-    if (isConnected && socket.current) {
-      socket.current.emit('chat-message', {
-        message: inputMessage.trim(),
-        userId,
-        sessionId,
-        roomId
-      });
-    } else {
-      // Fallback to REST API
-      try {
-        const response = await axios.post(`${API_BASE_URL}/api/mcp/test`, {
-          message: inputMessage.trim(),
-          userId,
-          sessionId
+    try {
+      // Try Socket.IO first if connected
+      if (isConnected && socketRef.current) {
+        socketRef.current.emit('chat-message', {
+          message: messageText,
+          roomId: roomId,
+          userId: 'demo-user-123',
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        // Fallback to REST API for Vercel deployment
+        const response = await fetch(`${API_BASE}/api/mcp/test`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: messageText,
+            userId: 'demo-user-123',
+            roomId: roomId
+          })
         });
 
-        setMessages(prev => [...prev, {
-          id: `bot-${Date.now()}`,
-          type: 'bot',
-          ...response.data.data,
-          timestamp: new Date().toISOString()
-        }]);
-      } catch (error) {
-        setMessages(prev => [...prev, {
-          id: `error-${Date.now()}`,
-          type: 'error',
-          message: 'Sorry, I encountered an error. Please try again.',
-          timestamp: new Date().toISOString()
-        }]);
-      } finally {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        const botMessage = {
+          id: Date.now() + 1,
+          text: data.message,
+          sender: 'bot',
+          timestamp: new Date(),
+          data: data.data
+        };
+        
+        setMessages(prev => [...prev, botMessage]);
+        
+        if (data.data?.suggestions) {
+          setSuggestions(data.data.suggestions);
+        }
+        
         setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setError('Failed to send message. Please try again.');
+      setIsLoading(false);
+      
+      const errorMessage = {
+        id: Date.now() + 1,
+        text: 'Sorry, I encountered an error. Please try again.',
+        sender: 'bot',
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
     }
+  };
 
-    setInputMessage('');
+  const handleSuggestionClick = (suggestion) => {
+    sendMessage(suggestion);
+    setSuggestions([]);
   };
 
   const handleKeyPress = (event) => {
@@ -161,183 +189,176 @@ function App() {
     }
   };
 
-  const handleSuggestionClick = (suggestion) => {
-    setInputMessage(suggestion);
-  };
-
-  const formatMessage = (message) => {
-    if (typeof message === 'string') return message;
-    if (message.message) return message.message;
-    return JSON.stringify(message, null, 2);
+  const testAPI = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/health`);
+      const data = await response.json();
+      console.log('API Health Check:', data);
+      
+      const healthMessage = {
+        id: Date.now(),
+        text: `API Health Check: ${data.status} - Platform: ${data.platform || 'Server'} - Version: ${data.version}`,
+        sender: 'bot',
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, healthMessage]);
+    } catch (error) {
+      console.error('API test failed:', error);
+      setError('API connection failed');
+    }
   };
 
   return (
-    <Box sx={{ flexGrow: 1, height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <AppBar position="static" sx={{ backgroundColor: '#1976d2' }}>
-        <Toolbar>
-          <HomeIcon sx={{ mr: 2 }} />
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            Blue Pixel AI Chatbot
+    <Container maxWidth="md" className="chat-container">
+      <Paper elevation={3} className="chat-paper">
+        {/* Header */}
+        <Box className="chat-header">
+          <Typography variant="h4" component="h1" gutterBottom>
+            🤖 Blue Pixel AI Chatbot
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Chip
-              label={isConnected ? 'Connected' : 'Disconnected'}
-              color={isConnected ? 'success' : 'error'}
+          <Typography variant="subtitle1" color="textSecondary">
+            Your Real Estate Assistant
+          </Typography>
+          <Box display="flex" alignItems="center" gap={1} mt={1}>
+            <Chip 
+              label={isConnected ? "Connected" : "Offline"} 
+              color={isConnected ? "success" : "warning"}
               size="small"
-              variant="outlined"
-              sx={{ color: 'white', borderColor: 'white' }}
             />
+            <Button 
+              size="small" 
+              variant="outlined" 
+              onClick={testAPI}
+            >
+              Test API
+            </Button>
           </Box>
-        </Toolbar>
-      </AppBar>
+        </Box>
 
-      {/* Main Chat Area */}
-      <Container maxWidth="md" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', py: 2 }}>
-        <Paper elevation={3} sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Messages */}
-          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
-            <List>
-              {messages.map((msg) => (
-                <ListItem
-                  key={msg.id}
-                  sx={{
-                    flexDirection: 'column',
-                    alignItems: msg.type === 'user' ? 'flex-end' : 'flex-start',
-                    mb: 1
-                  }}
-                >
-                  <Card
-                    sx={{
-                      maxWidth: '70%',
-                      backgroundColor: msg.type === 'user' ? '#1976d2' : 
-                                     msg.type === 'error' ? '#f44336' : '#f5f5f5',
-                      color: msg.type === 'user' || msg.type === 'error' ? 'white' : 'black'
-                    }}
-                  >
-                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                      <Typography variant="body1" component="div">
-                        {formatMessage(msg)}
-                      </Typography>
-                      
-                      {/* Suggestions */}
-                      {msg.suggestions && (
-                        <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                          {msg.suggestions.map((suggestion, index) => (
-                            <Chip
-                              key={index}
-                              label={suggestion}
-                              onClick={() => handleSuggestionClick(suggestion)}
-                              size="small"
-                              variant="outlined"
-                              sx={{ cursor: 'pointer' }}
-                            />
-                          ))}
-                        </Box>
-                      )}
-                      
-                      {/* Follow-up questions */}
-                      {msg.data?.followUpQuestions && (
-                        <Box sx={{ mt: 2 }}>
-                          <Typography variant="body2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                            Follow-up questions:
-                          </Typography>
-                          {msg.data.followUpQuestions.map((question, index) => (
-                            <Chip
-                              key={index}
-                              label={question}
-                              onClick={() => handleSuggestionClick(question)}
-                              size="small"
-                              variant="outlined"
-                              sx={{ cursor: 'pointer', mr: 1, mb: 1 }}
-                            />
-                          ))}
-                        </Box>
-                      )}
-                      
-                      <Typography variant="caption" sx={{ mt: 1, opacity: 0.7, display: 'block' }}>
-                        {new Date(msg.timestamp).toLocaleTimeString()}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </ListItem>
+        {/* Messages */}
+        <List className="messages-list">
+          {messages.length === 0 && (
+            <ListItem>
+              <Box className="welcome-message">
+                <Typography variant="h6" gutterBottom>
+                  👋 Welcome to Blue Pixel AI!
+                </Typography>
+                <Typography variant="body1" color="textSecondary">
+                  I'm here to help you with all your real estate needs. Try asking me about:
+                </Typography>
+                <Box mt={2} display="flex" flexWrap="wrap" gap={1}>
+                  {['Show me houses in San Francisco', 'Calculate mortgage for $500,000', 'What are current interest rates?', 'Find 3-bedroom apartments'].map((suggestion, index) => (
+                    <Chip
+                      key={index}
+                      label={suggestion}
+                      onClick={() => handleSuggestionClick(suggestion)}
+                      clickable
+                      color="primary"
+                      variant="outlined"
+                      size="small"
+                    />
+                  ))}
+                </Box>
+              </Box>
+            </ListItem>
+          )}
+          
+          {messages.map((message) => (
+            <ListItem key={message.id} className={`message-item ${message.sender}`}>
+              <Box className="message-content">
+                <Box display="flex" alignItems="flex-start" gap={1}>
+                  <Avatar className={`avatar ${message.sender}`}>
+                    {message.sender === 'bot' ? <BotIcon /> : <PersonIcon />}
+                  </Avatar>
+                  <Box className="message-bubble">
+                    <Typography variant="body1">
+                      {message.text}
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {message.timestamp.toLocaleTimeString()}
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+            </ListItem>
+          ))}
+          
+          {isLoading && (
+            <ListItem>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Avatar className="avatar bot">
+                  <BotIcon />
+                </Avatar>
+                <CircularProgress size={20} />
+                <Typography variant="body2" color="textSecondary">
+                  Thinking...
+                </Typography>
+              </Box>
+            </ListItem>
+          )}
+          
+          <div ref={messagesEndRef} />
+        </List>
+
+        {/* Suggestions */}
+        {suggestions.length > 0 && (
+          <Box className="suggestions">
+            <Typography variant="subtitle2" gutterBottom>
+              Suggestions:
+            </Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {suggestions.map((suggestion, index) => (
+                <Chip
+                  key={index}
+                  label={suggestion}
+                  onClick={() => handleSuggestionClick(suggestion)}
+                  clickable
+                  color="primary"
+                  variant="outlined"
+                  size="small"
+                />
               ))}
-              
-              {isLoading && (
-                <ListItem sx={{ justifyContent: 'center' }}>
-                  <CircularProgress size={24} />
-                  <Typography variant="body2" sx={{ ml: 2 }}>
-                    AI is thinking...
-                  </Typography>
-                </ListItem>
-              )}
-            </List>
-            <div ref={messagesEndRef} />
+            </Box>
           </Box>
+        )}
 
-          {/* Input Area */}
-          <Box sx={{ p: 2, borderTop: '1px solid #e0e0e0', backgroundColor: '#fafafa' }}>
-            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-              <Button
-                startIcon={<HomeIcon />}
-                onClick={() => handleSuggestionClick('Show me houses in my area')}
-                size="small"
-                variant="outlined"
-              >
-                Properties
-              </Button>
-              <Button
-                startIcon={<CalculateIcon />}
-                onClick={() => handleSuggestionClick('Calculate mortgage payment')}
-                size="small"
-                variant="outlined"
-              >
-                Mortgage
-              </Button>
-              <Button
-                startIcon={<TrendingUpIcon />}
-                onClick={() => handleSuggestionClick('What are current interest rates?')}
-                size="small"
-                variant="outlined"
-              >
-                Rates
-              </Button>
-              <Button
-                startIcon={<FavoriteIcon />}
-                onClick={() => handleSuggestionClick('Show my saved properties')}
-                size="small"
-                variant="outlined"
-              >
-                Saved
-              </Button>
-            </Box>
-            
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <TextField
-                fullWidth
-                multiline
-                maxRows={3}
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Ask me about real estate, properties, mortgages..."
-                variant="outlined"
-                disabled={isLoading}
-                sx={{ backgroundColor: 'white' }}
-              />
-              <Button
-                variant="contained"
-                onClick={sendMessage}
-                disabled={!inputMessage.trim() || isLoading}
-                sx={{ minWidth: 'auto', px: 2 }}
-              >
-                <SendIcon />
-              </Button>
-            </Box>
-          </Box>
-        </Paper>
-      </Container>
-    </Box>
+        {/* Input */}
+        <Box className="message-input">
+          <TextField
+            fullWidth
+            multiline
+            maxRows={4}
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Ask me about properties, mortgages, or real estate..."
+            variant="outlined"
+            disabled={isLoading}
+          />
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => sendMessage()}
+            disabled={!inputMessage.trim() || isLoading}
+            className="send-button"
+          >
+            <SendIcon />
+          </Button>
+        </Box>
+      </Paper>
+
+      {/* Error Snackbar */}
+      <Snackbar 
+        open={!!error} 
+        autoHideDuration={6000} 
+        onClose={() => setError('')}
+      >
+        <Alert severity="error" onClose={() => setError('')}>
+          {error}
+        </Alert>
+      </Snackbar>
+    </Container>
   );
 }
 
