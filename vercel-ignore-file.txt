@@ -1,0 +1,14 @@
+node_modules
+.git
+*.log
+.DS_Store
+.env
+src/
+config/
+database/
+models/
+utils/
+mcp/
+*.pdf
+*.docx
+README.md
