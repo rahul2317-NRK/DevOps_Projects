@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import io from 'socket.io-client';
 import {
   Container,
   Paper,
@@ -18,19 +17,20 @@ import {
 import {
   Send as SendIcon,
   SmartToy as BotIcon,
-  Person as PersonIcon
+  Person as PersonIcon,
+  CheckCircle as ConnectedIcon,
+  Error as DisconnectedIcon
 } from '@mui/icons-material';
 import './App.css';
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState([]);
+  const [apiStatus, setApiStatus] = useState('checking');
   const messagesEndRef = useRef(null);
-  const socketRef = useRef(null);
   const roomId = 'demo-room-123';
 
   // API base URL - use current origin for Vercel deployment
@@ -47,59 +47,43 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    // Initialize Socket.IO connection (fallback for real-time features)
-    try {
-      socketRef.current = io(API_BASE, {
-        transports: ['websocket', 'polling'],
-        timeout: 5000
-      });
-
-      socketRef.current.on('connect', () => {
-        console.log('Connected to server');
-        setIsConnected(true);
-        socketRef.current.emit('join-room', roomId);
-      });
-
-      socketRef.current.on('disconnect', () => {
-        console.log('Disconnected from server');
-        setIsConnected(false);
-      });
-
-      socketRef.current.on('chat-response', (response) => {
-        console.log('Received response:', response);
-        setIsLoading(false);
-        
-        const botMessage = {
-          id: Date.now(),
-          text: response.message,
-          sender: 'bot',
-          timestamp: new Date(),
-          data: response.data
-        };
-        
-        setMessages(prev => [...prev, botMessage]);
-        
-        if (response.data?.suggestions) {
-          setSuggestions(response.data.suggestions);
-        }
-      });
-
-      socketRef.current.on('connect_error', (error) => {
-        console.log('Connection error:', error);
-        setIsConnected(false);
-      });
-
-    } catch (error) {
-      console.error('Socket initialization error:', error);
-      setIsConnected(false);
-    }
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
+    // Check API status on load
+    checkApiStatus();
+    
+    // Add welcome message
+    const welcomeMessage = {
+      id: 'welcome',
+      text: 'Welcome to Blue Pixel AI! I\'m here to help you with all your real estate needs.',
+      sender: 'bot',
+      timestamp: new Date(),
+      data: {
+        suggestions: [
+          'Show me houses in San Francisco',
+          'Calculate mortgage for $500,000',
+          'What are current interest rates?',
+          'Find 3-bedroom apartments'
+        ]
       }
     };
-  }, [API_BASE]);
+    
+    setMessages([welcomeMessage]);
+  }, []);
+
+  const checkApiStatus = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/health`);
+      if (response.ok) {
+        const data = await response.json();
+        setApiStatus('connected');
+        console.log('API Status:', data);
+      } else {
+        setApiStatus('error');
+      }
+    } catch (error) {
+      console.error('API check failed:', error);
+      setApiStatus('error');
+    }
+  };
 
   const sendMessage = async (messageText = inputMessage) => {
     if (!messageText.trim()) return;
@@ -117,50 +101,40 @@ function App() {
     setError('');
 
     try {
-      // Try Socket.IO first if connected
-      if (isConnected && socketRef.current) {
-        socketRef.current.emit('chat-message', {
+      // Use REST API for Vercel deployment
+      const response = await fetch(`${API_BASE}/api/mcp/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           message: messageText,
-          roomId: roomId,
           userId: 'demo-user-123',
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        // Fallback to REST API for Vercel deployment
-        const response = await fetch(`${API_BASE}/api/mcp/test`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: messageText,
-            userId: 'demo-user-123',
-            roomId: roomId
-          })
-        });
+          roomId: roomId
+        })
+      });
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        const botMessage = {
-          id: Date.now() + 1,
-          text: data.message,
-          sender: 'bot',
-          timestamp: new Date(),
-          data: data.data
-        };
-        
-        setMessages(prev => [...prev, botMessage]);
-        
-        if (data.data?.suggestions) {
-          setSuggestions(data.data.suggestions);
-        }
-        
-        setIsLoading(false);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+      
+      const botMessage = {
+        id: Date.now() + 1,
+        text: data.message,
+        sender: 'bot',
+        timestamp: new Date(),
+        data: data.data
+      };
+      
+      setMessages(prev => [...prev, botMessage]);
+      
+      if (data.data?.suggestions) {
+        setSuggestions(data.data.suggestions);
+      }
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('Error sending message:', error);
       setError('Failed to send message. Please try again.');
@@ -203,9 +177,93 @@ function App() {
       };
       
       setMessages(prev => [...prev, healthMessage]);
+      setApiStatus('connected');
     } catch (error) {
       console.error('API test failed:', error);
       setError('API connection failed');
+      setApiStatus('error');
+    }
+  };
+
+  const testPropertySearch = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/property/search?city=San Francisco&maxPrice=900000`);
+      const data = await response.json();
+      
+      if (data.success && data.properties.length > 0) {
+        const property = data.properties[0];
+        const propertyMessage = {
+          id: Date.now(),
+          text: `Found ${data.total} properties! Here's one: ${property.address}, ${property.city}, ${property.state} - $${property.price.toLocaleString()} - ${property.bedrooms}bed/${property.bathrooms}bath - ${property.description}`,
+          sender: 'bot',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, propertyMessage]);
+      } else {
+        throw new Error('No properties found');
+      }
+    } catch (error) {
+      console.error('Property search failed:', error);
+      setError('Property search failed');
+    }
+  };
+
+  const testMortgageCalculation = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/mortgage/calculate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          loanAmount: 500000,
+          interestRate: 6.5,
+          loanTerm: 30,
+          downPayment: 100000
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        const calc = data.calculation;
+        const mortgageMessage = {
+          id: Date.now(),
+          text: `Mortgage Calculation: For a $${calc.loanDetails.loanAmount.toLocaleString()} loan at ${calc.loanDetails.interestRate}% for ${calc.loanDetails.loanTerm} years with $${calc.loanDetails.downPayment.toLocaleString()} down payment: Monthly Payment: $${calc.monthlyPayment.toLocaleString()}, Total Interest: $${calc.totalInterest.toLocaleString()}`,
+          sender: 'bot',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, mortgageMessage]);
+      } else {
+        throw new Error('Calculation failed');
+      }
+    } catch (error) {
+      console.error('Mortgage calculation failed:', error);
+      setError('Mortgage calculation failed');
+    }
+  };
+
+  const getStatusColor = () => {
+    switch (apiStatus) {
+      case 'connected': return 'success';
+      case 'error': return 'error';
+      default: return 'warning';
+    }
+  };
+
+  const getStatusLabel = () => {
+    switch (apiStatus) {
+      case 'connected': return 'API Connected';
+      case 'error': return 'API Error';
+      default: return 'Checking...';
+    }
+  };
+
+  const getStatusIcon = () => {
+    switch (apiStatus) {
+      case 'connected': return <ConnectedIcon />;
+      case 'error': return <DisconnectedIcon />;
+      default: return <CircularProgress size={16} />;
     }
   };
 
@@ -218,13 +276,14 @@ function App() {
             🤖 Blue Pixel AI Chatbot
           </Typography>
           <Typography variant="subtitle1" color="textSecondary">
-            Your Real Estate Assistant
+            Your Real Estate Assistant (REST API Mode)
           </Typography>
-          <Box display="flex" alignItems="center" gap={1} mt={1}>
+          <Box display="flex" alignItems="center" gap={1} mt={1} flexWrap="wrap">
             <Chip 
-              label={isConnected ? "Connected" : "Offline"} 
-              color={isConnected ? "success" : "warning"}
+              label={getStatusLabel()}
+              color={getStatusColor()}
               size="small"
+              icon={getStatusIcon()}
             />
             <Button 
               size="small" 
@@ -233,12 +292,26 @@ function App() {
             >
               Test API
             </Button>
+            <Button 
+              size="small" 
+              variant="outlined" 
+              onClick={testPropertySearch}
+            >
+              Test Properties
+            </Button>
+            <Button 
+              size="small" 
+              variant="outlined" 
+              onClick={testMortgageCalculation}
+            >
+              Test Mortgage
+            </Button>
           </Box>
         </Box>
 
         {/* Messages */}
         <List className="messages-list">
-          {messages.length === 0 && (
+          {messages.length === 1 && messages[0].id === 'welcome' && (
             <ListItem>
               <Box className="welcome-message">
                 <Typography variant="h6" gutterBottom>
@@ -248,7 +321,7 @@ function App() {
                   I'm here to help you with all your real estate needs. Try asking me about:
                 </Typography>
                 <Box mt={2} display="flex" flexWrap="wrap" gap={1}>
-                  {['Show me houses in San Francisco', 'Calculate mortgage for $500,000', 'What are current interest rates?', 'Find 3-bedroom apartments'].map((suggestion, index) => (
+                  {messages[0].data?.suggestions?.map((suggestion, index) => (
                     <Chip
                       key={index}
                       label={suggestion}
@@ -292,7 +365,7 @@ function App() {
                 </Avatar>
                 <CircularProgress size={20} />
                 <Typography variant="body2" color="textSecondary">
-                  Thinking...
+                  Processing your request...
                 </Typography>
               </Box>
             </ListItem>
